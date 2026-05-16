@@ -1,124 +1,180 @@
+"""
+Astronomy Data Cleaning Pipeline
+=================================
+Cleans and preprocesses raw astronomy CSV data through the following steps:
+    1. Import data
+    2. Inspect data
+    3. Remove duplicates
+    4. Standardize column names
+    5. Fix data types
+    6. Handle outliers
+    7. Fill missing values
+    8. Scale apparent size
+    9. Export cleaned data
+"""
 
-##STEP ONE - IMPORT DATA##
-
-import pandas as pd
 import numpy as np
-file_path = '/Users/ezrabayewitz/Downloads/portfolio/astronomy_data.csv'          
-df = pd.read_csv(file_path)                                             #pandas reads over file
+import pandas as pd
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+INPUT_PATH  = "/Users/ezrabayewitz/Downloads/portfolio/astronomy_data.csv"
+OUTPUT_PATH = "/Users/ezrabayewitz/Downloads/portfolio/cleaned_astronomy_data.csv"
+
+OUTLIER_APPARENT_SIZE_MAX = 15       # arcminutes
+OUTLIER_DISTANCE_MAX      = 20_000   # light-years
+
+SCALED_SIZE_MIN = 0.01               # arcseconds (realistic lower bound)
+SCALED_SIZE_MAX = 1.0                # arcseconds (realistic upper bound)
 
 
-##STEP TWO - UNDERSTAND DATA##
+# ── Step 1 · Import ────────────────────────────────────────────────────────────
 
-print(df.head())                                                        #read over first few rows of dataframe
-
-print(df.info())                                                        #get some important info on the data                                                                       #Non-Null Count tells us how many entries are left blank
-
-print(df.describe())                                                    #get statistical data on columns
-
- 
-###STEP THREE - GET RID OF DUPLICATE ROWS###
-
-df.drop_duplicates(inplace=True)                               
-print(df.info())
+def load_data(path: str) -> pd.DataFrame:
+    """Read CSV file into a DataFrame."""
+    df = pd.read_csv(path)
+    print(f"[load] {len(df):,} rows loaded from {path}")
+    return df
 
 
+# ── Step 2 · Inspect ───────────────────────────────────────────────────────────
 
-###STEP FOUR - STANDARDIZE COLUMN NAMES###
-
-df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
-
-
-
-###STEP FIVE - FIX DATA TYPES###
-
-print(df.dtypes)
-
-        #We see that the data type for 'distance_light_years' should be an integer, not an object
-
-df['distance_light_years'] = pd.to_numeric(df['distance_light_years'], errors='coerce')         
-print(df.dtypes)                                            
+def inspect_data(df: pd.DataFrame) -> None:
+    """Print a quick overview of the DataFrame."""
+    print("\n── Head ──────────────────────────────")
+    print(df.head())
+    print("\n── Info ──────────────────────────────")
+    print(df.info())
+    print("\n── Describe ──────────────────────────")
+    print(df.describe())
 
 
+# ── Step 3 · Remove Duplicates ─────────────────────────────────────────────────
 
-###STEP SIX - HANDLE OUTLIERS###
-
-
-        #check how many rows have outliers in 'apparent_size_arcminutes'
-
-outliers_count = df[df['apparent_size_arcminutes'] > 15].shape[0]              
-print(f"Rows where apparent_size_arcminutes > 15: {outliers_count}")
-
-        #get rid of outliers in 'apparent_size_arcminutes' column
-
-df = df[df['apparent_size_arcminutes'] < 15]                    
-print(df['apparent_size_arcminutes'].describe())
-
-        #get rid of outlier in 'distance_light_years' column
-
-df=df[df['distance_light_years'] < 20000]
-
-###STEP SEVEN - CHECK & FILL MISSING VALUES###
-
-print(df['magnitude'].isna().sum())                         #97 missijng values
-print(df['distance_light_years'].isna().sum())              #47 missing values
-print(df['spectral_type'].isna().sum())
-print(df['discovery_year'].isna().sum())
-print(df['observed_position_ra'].isna().sum())
-print(df['observed_position_dec'].isna().sum())
-print(df['apparent_size_arcminutes'].isna().sum())
-print(df['planetary_system'].isna().sum())                  #307 missing values
-
-        #fill magnitude with random value based on min and max magnitude of each spectral type 
-
-spectral_type_ranges = df.groupby('spectral_type')['magnitude'].agg(['min', 'max'])
-
-        #define function that fills missing value based on spectral type's magnitude range
-
-def randomize_magnitude(row):
-    if pd.isnull(row['magnitude']):
-        #Get spectral type for each row
-        spectral_type = row['spectral_type']
-
-        #Find min and max magnitudes for spectral type
-        min_mag = spectral_type_ranges.loc[spectral_type, 'min']
-        max_mag = spectral_type_ranges.loc[spectral_type, 'max']
-
-        #Randomly pick a value between the min and max for this spectral type
-        return np.random.uniform(min_mag, max_mag)
-    else:
-        return row['magnitude']
-
-        #apply function to fill missing magnitudes
-    
-df['magnitude'] = df.apply(randomize_magnitude, axis=1)
-print(df['magnitude'].describe())
-    
-df.fillna({                                                 #missing values are filled with mean for light years                         
-    'distance_light_years':df['distance_light_years'].mean(),
-    }, inplace=True)
-
-df['planetary_system'].fillna('unknown', inplace=True)      #blanks in object column are filled in with value
-
-# Define the realistic range in arcseconds
-min_realistic = 0.01
-max_realistic = 1.0
-
-# Get the minimum and maximum of the original 'apparent_size_arcminutes' column
-min_original = df['apparent_size_arcminutes'].min()
-max_original = df['apparent_size_arcminutes'].max()
-
-# Scale the 'apparent_size_arcminutes' column to the realistic range (arcseconds)
-df['scaled_apparent_size'] = ((df['apparent_size_arcminutes'] - min_original) /
-                                     (max_original - min_original)) * (max_realistic - min_realistic) + min_realistic
-
-###STEP EIGHT - REMOVE/CORRECT WEIRD CHARACTERS###    
-
-        #check data, there are'nt any weird characters in this data so it's not necessary here
-print(df[['apparent_size_arcminutes', 'scaled_apparent_size']])
+def drop_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop exact duplicate rows."""
+    before = len(df)
+    df = df.drop_duplicates()
+    print(f"[duplicates] removed {before - len(df):,} duplicate rows")
+    return df
 
 
-###FINAL STEP - SAVE CLEANED DATA TO NEW CSV FILE###
+# ── Step 4 · Standardize Column Names ─────────────────────────────────────────
 
-df.to_csv('/Users/ezrabayewitz/Downloads/portfolio/cleaned_astronomy_data.csv', index=False)
+def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip whitespace, lowercase, and replace spaces with underscores."""
+    df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
+    print(f"[columns] standardized: {list(df.columns)}")
+    return df
 
-print(df.loc[2, 'magnitude'])
+
+# ── Step 5 · Fix Data Types ────────────────────────────────────────────────────
+
+def fix_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce 'distance_light_years' to numeric (non-parseable → NaN)."""
+    df["distance_light_years"] = pd.to_numeric(
+        df["distance_light_years"], errors="coerce"
+    )
+    print(f"[dtypes]\n{df.dtypes}")
+    return df
+
+
+# ── Step 6 · Handle Outliers ───────────────────────────────────────────────────
+
+def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows with implausible apparent size or distance values."""
+    n_size = df[df["apparent_size_arcminutes"] > OUTLIER_APPARENT_SIZE_MAX].shape[0]
+    print(f"[outliers] apparent_size_arcminutes > {OUTLIER_APPARENT_SIZE_MAX}: {n_size} rows")
+
+    df = df[df["apparent_size_arcminutes"] < OUTLIER_APPARENT_SIZE_MAX]
+    df = df[df["distance_light_years"] < OUTLIER_DISTANCE_MAX]
+
+    print(f"[outliers] {len(df):,} rows remaining after removal")
+    return df
+
+
+# ── Step 7 · Fill Missing Values ───────────────────────────────────────────────
+
+def _build_spectral_magnitude_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a DataFrame with min/max magnitude per spectral type."""
+    return df.groupby("spectral_type")["magnitude"].agg(["min", "max"])
+
+
+def _fill_magnitude_row(row: pd.Series, ranges: pd.DataFrame) -> float:
+    """Return a random magnitude within the spectral type's observed range."""
+    if pd.isnull(row["magnitude"]):
+        lo = ranges.loc[row["spectral_type"], "min"]
+        hi = ranges.loc[row["spectral_type"], "max"]
+        return np.random.uniform(lo, hi)
+    return row["magnitude"]
+
+
+def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill missing values:
+      - magnitude          → random value within the spectral-type's min/max range
+      - distance_light_years → column mean
+      - planetary_system   → 'unknown'
+    """
+    # Magnitude
+    missing_mag = df["magnitude"].isna().sum()
+    print(f"[missing] magnitude: {missing_mag} NaNs")
+    spectral_ranges = _build_spectral_magnitude_ranges(df)
+    df["magnitude"] = df.apply(
+        _fill_magnitude_row, axis=1, ranges=spectral_ranges
+    )
+
+    # Distance
+    missing_dist = df["distance_light_years"].isna().sum()
+    print(f"[missing] distance_light_years: {missing_dist} NaNs → filled with mean")
+    df["distance_light_years"].fillna(df["distance_light_years"].mean(), inplace=True)
+
+    # Planetary system
+    missing_ps = df["planetary_system"].isna().sum()
+    print(f"[missing] planetary_system: {missing_ps} NaNs → filled with 'unknown'")
+    df["planetary_system"].fillna("unknown", inplace=True)
+
+    return df
+
+
+# ── Step 8 · Scale Apparent Size ───────────────────────────────────────────────
+
+def scale_apparent_size(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Min-max scale 'apparent_size_arcminutes' into a realistic arcsecond range
+    and store the result in 'scaled_apparent_size'.
+    """
+    col = df["apparent_size_arcminutes"]
+    df["scaled_apparent_size"] = (
+        (col - col.min()) / (col.max() - col.min())
+    ) * (SCALED_SIZE_MAX - SCALED_SIZE_MIN) + SCALED_SIZE_MIN
+
+    print("[scale] scaled_apparent_size stats:")
+    print(df["scaled_apparent_size"].describe())
+    return df
+
+
+# ── Step 9 · Export ────────────────────────────────────────────────────────────
+
+def save_data(df: pd.DataFrame, path: str) -> None:
+    """Write the cleaned DataFrame to a CSV file."""
+    df.to_csv(path, index=False)
+    print(f"\n[save] cleaned data saved to {path}  ({len(df):,} rows)")
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    df = load_data(INPUT_PATH)
+    inspect_data(df)
+    df = drop_duplicates(df)
+    df = standardize_columns(df)
+    df = fix_dtypes(df)
+    df = remove_outliers(df)
+    df = fill_missing_values(df)
+    df = scale_apparent_size(df)
+    save_data(df, OUTPUT_PATH)
+
+
+if __name__ == "__main__":
+    main()
